@@ -47,6 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/policy"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
@@ -2170,6 +2171,46 @@ func (s *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil.B
 	}
 	return SubmitTransaction(ctx, s.b, tx)
 }
+
+// SendRawTransactionConditional will add the signed transaction to the transaction pool
+// with attached TxOptions.
+// TODO: don't expose internal error to users
+func (s TransactionAPI) SendRawTransactionConditional(ctx context.Context, input hexutil.Bytes, txOptions policy.TxOptions) (common.Hash, error) {
+	if cost := txOptions.Cost(); cost > 1000 {
+		return common.Hash{}, fmt.Errorf("%w: %d exceeded 1000", policy.ErrLargeTxOptions, cost)
+	}
+
+	// This is too expensive
+	state, header, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.LatestBlockNumber)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+
+	valid, err := header.ValidateTxOptions(&txOptions)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if !valid {
+		return common.Hash{}, fmt.Errorf("%w: environment options", policy.ErrInvalidTxOptions)
+	}
+
+	valid, err = state.ValidateTxOptions(&txOptions)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if !valid {
+		return common.Hash{}, fmt.Errorf("%w: state options", policy.ErrInvalidTxOptions)
+	}
+
+	tx := new(types.Transaction)
+	if err := tx.UnmarshalBinary(input); err != nil {
+		return common.Hash{}, err
+	}
+	tx.SetTxOptions(&txOptions)
+	return SubmitTransaction(ctx, s.b, tx)
+}
+
 
 // Sign calculates an ECDSA signature for:
 // keccak256("\x19Ethereum Signed Message:\n" + len(message) + message).

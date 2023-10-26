@@ -878,6 +878,21 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 		// during transaction acceptance is the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
 
+		// If the user specified TxOptions, honor them when building a block.
+		if txOptions := tx.TxOptions(); txOptions != nil {
+			if valid, _ := env.header.ValidateTxOptions(txOptions); !valid {
+				log.Trace("Skipping transaction with invalid environment options", "sender", from, "hash", tx.Hash())
+				txs.Pop()
+				continue
+			}
+
+			if valid, _ := env.state.ValidateTxOptions(txOptions); !valid {
+				log.Trace("Skipping transaction with invalid state options", "sender", from, "hash", tx.Hash())
+				txs.Pop()
+				continue
+			}
+		}
+
 		// Check whether the tx is replay protected. If we're not in the EIP155 hf
 		// phase, start ignoring the sender until we do.
 		if tx.Protected() && !w.chainConfig.IsEIP155(env.header.Number) {

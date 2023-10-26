@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/policy"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
@@ -205,6 +206,41 @@ func (s *StateDB) setError(err error) {
 func (s *StateDB) Error() error {
 	return s.dbErr
 }
+
+
+// ValidateTxOptions will check the TxOptions against the current state.
+// A KnownAccount can hit either one of the root or slots branches or neither.
+func (s *StateDB) ValidateTxOptions(opts *policy.TxOptions) (bool, error) {
+	for addr, acct := range opts.KnownAccounts {
+		if root, isRoot := acct.Root(); isRoot {
+			storageTrie, err := s.db.OpenStorageTrie(s.originalRoot, addr, root)
+			if err != nil {
+				return false, err
+			}
+			if storageTrie == nil {
+				if root != types.EmptyRootHash {
+					return false, policy.KnownAccountsNotMatch.With(fmt.Errorf("root mismatch, account: %v want: %v get: %v", addr, root, nil))
+				}
+			} else {
+				realRoot := storageTrie.Hash()
+				if realRoot != root {
+					return false, policy.KnownAccountsNotMatch.With(fmt.Errorf("root mismatch, account: %v want: %v get: %v", addr, root, realRoot))
+				}
+			}
+		}
+		if slots, isSlots := acct.Slots(); isSlots {
+			for key, value := range slots {
+				realValue := s.GetState(addr, key)
+				if value != realValue {
+					return false, policy.KnownAccountsNotMatch.With(fmt.Errorf("slot mismatch, account: %v key: %v want: %v get: %v", addr, key, value, realValue))
+				}
+			}
+		}
+	}
+	return true, nil
+}
+
+
 
 func (s *StateDB) AddLog(log *types.Log) {
 	s.journal.append(addLogChange{txhash: s.thash})

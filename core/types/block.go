@@ -28,6 +28,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/policy"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -163,6 +164,31 @@ func (h *Header) EmptyBody() bool {
 // EmptyReceipts returns true if there are no receipts for this header/block.
 func (h *Header) EmptyReceipts() bool {
 	return h.ReceiptHash == EmptyReceiptsHash
+}
+
+// ValidateTxOptions will validate the TxOptions against a header.
+func (h *Header) ValidateTxOptions(opts *policy.TxOptions) (bool, error) {
+	if opts.BlockNumberMin != nil {
+		if h.Number.Cmp(opts.BlockNumberMin) < 0 {
+			return false, policy.OutOfBlockNumberRange.With(fmt.Errorf("Desired minimum block number: %v, Current block number: %v", opts.BlockNumberMin, h.Number))
+		}
+	}
+	if opts.BlockNumberMax != nil {
+		if h.Number.Cmp(opts.BlockNumberMax) > 0 {
+			return false, policy.OutOfBlockNumberRange.With(fmt.Errorf("Desired maximum block number: %v, Current block number: %v", opts.BlockNumberMax, h.Number))
+		}
+	}
+	if opts.TimestampMin != nil {
+		if h.Time < uint64(*opts.TimestampMin) {
+			return false, policy.OutOfTimestampRange.With(fmt.Errorf("Desired minimum timestamp: %v, Current timestamp: %v", *opts.TimestampMin, h.Time))
+		}
+	}
+	if opts.TimestampMax != nil {
+		if h.Time > uint64(*opts.TimestampMax) {
+			return false, policy.OutOfTimestampRange.With(fmt.Errorf("Desired maximum timestamp: %v, Current timestamp: %v", *opts.TimestampMax, h.Time))
+		}
+	}
+	return true, nil
 }
 
 // Body is a simple (mutable, non-safe) data container for storing and moving

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/policy"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -52,6 +53,9 @@ const (
 type Transaction struct {
 	inner TxData    // Consensus contents of a transaction
 	time  time.Time // Time first seen locally (spam avoidance)
+
+	// Policy level transaction options
+	options *policy.TxOptions
 
 	// caches
 	hash atomic.Value
@@ -355,6 +359,17 @@ func (tx *Transaction) IsDepositTx() bool {
 func (tx *Transaction) IsSystemTx() bool {
 	return tx.inner.isSystemTx()
 }
+
+// TxOptions is a getter for the TxOptions.
+func (tx *Transaction) TxOptions() *policy.TxOptions {
+	return tx.options
+}
+
+// SetTxOptions is a setter for the TxOptions.
+func (tx *Transaction) SetTxOptions(txOptions *policy.TxOptions) {
+	tx.options = txOptions
+}
+
 
 // Cost returns (gas * gasPrice) + (blobGas * blobGasPrice) + value.
 func (tx *Transaction) Cost() *big.Int {

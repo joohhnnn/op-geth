@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -403,6 +404,31 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64) (types.Transactions, 
 	l.txs.reheap()
 	return removed, invalids
 }
+
+// FilterTxOptions removes all transactions from the list that have invalid TxOptions.
+// Every removed transaction is returned for any post-removal maintenance. It is
+// more costly than the operations in `Filter` so it is split into its own method
+// and is called less often.
+func (l *list) FilterTxOptions(db *state.StateDB) (types.Transactions, []error) {
+	var errs []error
+	removed := l.txs.filter(func(tx *types.Transaction) bool {
+		if txOptions := tx.TxOptions(); txOptions != nil {
+			valid, err := db.ValidateTxOptions(txOptions)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			return !valid
+		}
+		return false
+	})
+
+	if len(removed) == 0 {
+		return nil, errs
+	}
+	l.txs.reheap()
+	return removed, errs
+}
+
 
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.

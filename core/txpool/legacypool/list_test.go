@@ -21,8 +21,12 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/policy"
 )
 
 // Tests that transactions can be added to strict lists and list contents and
@@ -50,6 +54,72 @@ func TestStrictListAdd(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterTxOptions tests filtering by invalid TxOptions.
+func TestFilterTxOptions(t *testing.T) {
+	// Create an in memory state db to test against.
+	memDb := rawdb.NewMemoryDatabase()
+	db := state.NewDatabase(memDb)
+	state, _ := state.New(common.Hash{}, db, nil)
+
+	// Create a private key to sign transactions.
+	key, _ := crypto.GenerateKey()
+
+	// Create a list.
+	list := newList(true)
+
+	// Create a transaction with no defined tx options
+	// and add to the list.
+	tx := transaction(0, 1000, key)
+	list.Add(tx, DefaultConfig.PriceBump, nil)
+
+	// There should be no drops at this point.
+	// No state has been modified.
+	drops, errs := list.FilterTxOptions(state)
+	if len(errs) != 0 {
+		t.Fatalf("got errors when filtering by TxOptions: %s", errs)
+	}
+	if count := len(drops); count != 0 {
+		t.Fatalf("got %d filtered by TxOptions when there should not be any", count)
+	}
+
+	// Create another transaction with a known account storage root tx option
+	// and add to the list.
+	tx2 := transaction(1, 1000, key)
+	tx2.SetTxOptions(&policy.TxOptions{
+		KnownAccounts: map[common.Address]policy.KnownAccount{
+			common.Address{19: 1}: policy.KnownAccount{
+				StorageRoot: &types.EmptyRootHash,
+			},
+		},
+	})
+	list.Add(tx2, DefaultConfig.PriceBump, nil)
+
+	// There should still be no drops as no state has been modified.
+	drops, errs = list.FilterTxOptions(state)
+	if len(errs) != 0 {
+		t.Fatalf("got errors when filtering by TxOptions: %s", errs)
+	}
+	if count := len(drops); count != 0 {
+		t.Fatalf("got %d filtered by TxOptions when there should not be any", count)
+	}
+
+	// Set state that conflicts with tx2's policy
+	state.SetState(common.Address{19: 1}, common.Hash{}, common.Hash{31: 1})
+
+	// tx2 should be the single transaction filtered out
+	drops, errs = list.FilterTxOptions(state)
+	if len(errs) != 0 {
+		t.Fatalf("got errors when filtering by TxOptions: %s", errs)
+	}
+	if count := len(drops); count != 1 {
+		t.Fatalf("got %d filtered by TxOptions when there should be a single one", count)
+	}
+	if drops[0] != tx2 {
+		t.Fatalf("Got %x, expected %x", drops[0].Hash(), tx2.Hash())
+	}
+}
+
 
 func BenchmarkListAdd(b *testing.B) {
 	// Generate a list of transactions to insert
