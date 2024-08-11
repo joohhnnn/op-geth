@@ -2001,9 +2001,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
     if len(data) >= 4 {
         prefix := binary.BigEndian.Uint32(data[:4])
         if prefix == 0x11111111 {
-            fmt.Println("匹配成功！")
             if len(data) < 36 {
-                fmt.Println("输入数据长度不足以包含bytes参数")
                 return common.Hash{}, fmt.Errorf("input data too short to contain bytes parameter")
             }
 
