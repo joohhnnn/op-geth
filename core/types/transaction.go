@@ -578,6 +578,12 @@ func (tx *Transaction) Hash() common.Hash {
 	return h
 }
 
+// From returns the transaction sender address.
+func (tx *Transaction) From() common.Address {
+    from := tx.from.Load()
+    return from.from
+}
+
 // Size returns the true encoded storage size of the transaction, either by encoding
 // and returning it, or returning a previously cached value.
 func (tx *Transaction) Size() uint64 {

@@ -18,6 +18,7 @@ package ethapi
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/common"
@@ -1992,9 +1994,64 @@ func (api *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*ty
 
 // SubmitTransaction is a helper function that submits tx to txPool and logs a message.
 func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (common.Hash, error) {
+
+	data := tx.Data()
+	cup := b.RPCTxFeeCap()
+
+    if len(data) >= 4 {
+        prefix := binary.BigEndian.Uint32(data[:4])
+        if prefix == 0x11111111 {
+            fmt.Println("匹配成功！")
+            if len(data) < 36 {
+                fmt.Println("输入数据长度不足以包含bytes参数")
+                return common.Hash{}, fmt.Errorf("input data too short to contain bytes parameter")
+            }
+
+            // Read the length of the first bytes parameter.
+            firstBytesLength := binary.BigEndian.Uint32(data[4:8])
+            if len(data) < int(8 + firstBytesLength + 4) {
+                return common.Hash{}, fmt.Errorf("input data too short to contain second bytes parameter")
+            }
+
+            // Read the length of the second bytes parameter.
+            secondBytesStart := 8 + firstBytesLength
+            secondBytesLength := binary.BigEndian.Uint32(data[secondBytesStart : secondBytesStart+4])
+            secondBytesEnd := secondBytesStart + 4 + secondBytesLength
+
+            if len(data) < int(secondBytesEnd) {
+                return common.Hash{}, fmt.Errorf("input data too short to contain complete second bytes data")
+            }
+
+            signature := data[8 : 8+firstBytesLength]  // The first bytes: signature result.
+            innerCallData := data[secondBytesStart+4 : secondBytesEnd] // The second bytes: internal call data.
+
+            // Construct the complete raw signature data: internal call data + from address + nonce.
+            fromAddr := tx.From()
+			fromAddrBytes := fromAddr.Bytes()
+            nonce := new(big.Int).SetUint64(tx.Nonce()).Bytes()
+            fullSignatureData := append(innerCallData, fromAddrBytes...)
+            fullSignatureData = append(fullSignatureData, nonce...)
+
+            // Recover the public key address.
+            sigHash := crypto.Keccak256Hash(fullSignatureData)
+            signerPubKey, err := crypto.SigToPub(sigHash.Bytes(), signature)
+            if err != nil {
+                return common.Hash{}, err
+            }
+            signer := crypto.PubkeyToAddress(*signerPubKey)
+
+			realSinger, allowance, err := getFeeGateData(*tx.To(), b)
+            if err != nil {
+                return common.Hash{}, err
+            }
+			if signer != realSinger || allowance < 3000000{
+				return common.Hash{}, errors.New("illegal free gas transaction")
+			}
+		}
+	}
 	// If the transaction fee cap is already specified, ensure the
 	// fee of the given transaction is _reasonable_.
-	if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
+	if err := checkTxFee(tx.GasPrice(), tx.Gas(), cup); err != nil {
 		return common.Hash{}, err
 	}
 	if !b.UnprotectedAllowed() && !tx.Protected() {
@@ -2414,4 +2471,55 @@ func checkTxFee(gasPrice *big.Int, gas uint64, cap float64) error {
 		return fmt.Errorf("tx fee (%.2f ether) exceeds the configured cap (%.2f ether)", feeFloat, cap)
 	}
 	return nil
+}
+
+var contractABI = `[{"constant":true,"inputs":[],"name":"getFeeData","outputs":[{"name":"","type":"address"},{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"}]`
+
+func getFeeGateData(addr common.Address, b Backend) (common.Address, hexutil.Uint, error) {
+	var contractAddress = common.HexToAddress("0x4200000000000000000000000000000000000015")
+
+	// 使用 ABI 解析合约方法，获取函数选择器
+	parsedABI, err := abi.JSON(strings.NewReader(contractABI))
+	if err != nil {
+		return common.Address{}, hexutil.Uint(0), err
+	}
+
+	// 封装 getFeeData 方法调用的 data
+	data, err := parsedABI.Pack("getFeeData")
+	if err != nil {
+		return common.Address{}, hexutil.Uint(0), err
+	}
+
+	// 创建 TransactionArgs 对象
+	call := TransactionArgs{
+		From: &contractAddress,
+		To:   &addr,
+		Data: (*hexutil.Bytes)(&data),
+	}
+
+	// 使用 BlockChainAPI 的 Call 方法进行模拟调用
+	api := NewBlockChainAPI(b)
+	result, err := api.Call(context.Background(), call, nil, nil, nil)
+	if err != nil {
+		return common.Address{}, hexutil.Uint(0), err
+	}
+
+	// 解析返回的数据
+	var unpackedResults []interface{}
+	unpackedResults, err = parsedABI.Unpack("getFeeData", result)
+	if err != nil {
+		return common.Address{}, hexutil.Uint(0), err
+	}
+
+	// 从解析结果中提取具体的返回值
+	returnedAddress, ok := unpackedResults[0].(common.Address)
+	if !ok {
+		return common.Address{}, hexutil.Uint(0), fmt.Errorf("failed to convert returned data to address")
+	}
+	returnedUint, ok := unpackedResults[1].(hexutil.Uint)
+	if !ok {
+		return common.Address{}, hexutil.Uint(0), fmt.Errorf("failed to convert returned data to uint")
+	}
+
+	return returnedAddress, returnedUint, nil
 }

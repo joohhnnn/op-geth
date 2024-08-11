@@ -60,6 +60,7 @@ type environment struct {
 	tcount   int            // tx count in cycle
 	gasPool  *core.GasPool  // available gas used to pack transactions
 	coinbase common.Address
+    freeGasLeft map[common.Address]uint64 // Map from address to max gas used
 
 	header   *types.Header
 	txs      []*types.Transaction
@@ -281,6 +282,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 		state:    state,
 		coinbase: coinbase,
 		header:   header,
+		freeGasLeft: make(map[common.Address]uint64),
 	}, nil
 }
 
@@ -413,6 +415,22 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			txs.Pop()
 			continue
 		}
+		to := *tx.To() // Get recipient address
+		gasLimit := tx.Gas()
+
+		// Initialize maxGasUsage if it doesn't exist
+		if _, exists := env.freeGasLeft[to]; !exists {
+			env.freeGasLeft[to] = env.header.GasLimit // Assuming an initial max gas usage
+		}
+
+		// Check if the remaining maxGasUsage is less than the gas used
+		if env.freeGasLeft[to] < gasLimit {
+			log.Trace("Not enough gas quota left for free gas transaction", "hash", tx.Hash().Hex())
+			txs.Pop()
+			continue
+		}
+
+		env.freeGasLeft[to] -= gasLimit
 		// Start executing the transaction
 		env.state.SetTxContext(tx.Hash(), env.tcount)
 
