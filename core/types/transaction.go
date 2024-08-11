@@ -354,6 +354,13 @@ func (tx *Transaction) IsDepositTx() bool {
 	return tx.Type() == DepositTxType
 }
 
+// IsZeroGasTx returns true if the transaction is a zero gas price tx type.
+func (tx *Transaction) IsZeroGasTx() bool {
+    gasPrice := tx.GasPrice()
+
+    return gasPrice.Sign() == 0
+}
+
 // IsSystemTx returns true for deposits that are system transactions. These transactions
 // are executed in an unmetered environment & do not contribute to the block gas limit.
 func (tx *Transaction) IsSystemTx() bool {
