@@ -2000,6 +2000,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 
     if len(data) >= 4 {
         prefix := binary.BigEndian.Uint32(data[:4])
+		//todo: change this to the right selector
         if prefix == 0x11111111 {
             if len(data) < 36 {
                 return common.Hash{}, fmt.Errorf("input data too short to contain bytes parameter")
